@@ -642,25 +642,32 @@ def fetch_netease_tags(music_id: int | str, title: str | None = None) -> dict[st
             # 4. Track total
             track_total = album.get("size")
             if track_total not in (None, ""):
+                try:
+                    total_val = int(track_total)
+                    if total_val <= 0:
+                        print(f"  [修正] 歌曲《{song_name}》(ID: {music_id}) 的总音轨数为 {track_total}，已修正为 1。")
+                        track_total = "1"
+                    else:
+                        track_total = str(total_val)
+                except (ValueError, TypeError):
+                    pass
                 tags["TRACKTOTAL"] = str(track_total)
                 
             # 5. Disc number
             disc = song.get("disc")
+            disc_val = 1
             if disc:
                 try:
-                    disc_val = int(disc)
-                    if disc_val < 1:
+                    parsed_val = int(disc)
+                    if parsed_val < 1:
                         print(f"  [修正] 歌曲《{song_name}》(ID: {music_id}) 的碟片号为 {disc}，已修正为 1。")
-                        disc = "1"
+                        disc_val = 1
                     else:
-                        disc = str(disc_val)
+                        disc_val = parsed_val
                 except (ValueError, TypeError):
                     pass
-                tags["DISCNUMBER"] = str(disc)
-            else:
-                tags["DISCNUMBER"] = "1"
-                
-            tags["DISCTOTAL"] = "1"
+            tags["DISCNUMBER"] = str(disc_val)
+            tags["DISCTOTAL"] = str(disc_val)
             
             # 6. Record Company / Publisher (using ORGANIZATION for Mp3tag compatibility in FLAC)
             company = album.get("company")
@@ -733,16 +740,12 @@ def update_flac_metadata(
             vendor = existing_vendor or vendor
             for comment in comments:
                 key = comment.split("=", 1)[0].upper()
-                if key in {"COMMENT", "DESCRIPTION", "URL", "WWW", "WWWAUDIOFILE"}:
+                if key in {"COMMENT", "DESCRIPTION", "URL", "WWW", "WWWAUDIOFILE", "ENCODER", "ENCODEDBY"}:
                     continue
                 if key == "PUBLISHER":
                     val = comment.split("=", 1)[1]
                     comment = f"ORGANIZATION={val}"
                     key = "ORGANIZATION"
-                elif key == "ENCODER":
-                    val = comment.split("=", 1)[1]
-                    comment = f"ENCODEDBY={val}"
-                    key = "ENCODEDBY"
                 if key not in reserved_keys:
                     other_comments.append(comment)
             changed = True
@@ -993,7 +996,7 @@ def update_mp3_metadata(
         requested_keys.add("ALBUM")
     remove_ids = {frame_map[key] for key in requested_keys if key in frame_map}
     remove_ids.update({"TYER"} if "DATE" in extra_tags else set())
-    remove_ids.update({"COMM", "WXXX", "WOAR", "WOAS", "WOAF", "WWW"})  # 强行过滤评论与URL网址帧
+    remove_ids.update({"COMM", "WXXX", "WOAR", "WOAS", "WOAF", "WWW", "TENC", "TSSE"})  # 强行过滤评论、URL网址与编码器帧
     if cover_data:
         remove_ids.add("APIC")
     rebuilt_frames = [(frame_id, payload) for frame_id, payload in frames if frame_id not in remove_ids]
@@ -1031,22 +1034,7 @@ def update_mp3_metadata(
         pub_val = extra_tags["ORGANIZATION"]
         if pub_val.strip():
             rebuilt_frames.append(("TPUB", encode_id3_text(pub_val)))
-    if "ENCODEDBY" in extra_tags:
-        enc_val = extra_tags["ENCODEDBY"]
-        if enc_val.strip():
-            rebuilt_frames.append(("TENC", encode_id3_text(enc_val)))
-    if "ENCODER" in extra_tags:
-        enc_val = extra_tags["ENCODER"]
-        if enc_val.strip():
-            rebuilt_frames.append(("TSSE", encode_id3_text(enc_val)))
 
-    # 如果原文件只含 TSSE，没有 TENC，则自动将 TSSE 转换为 TENC (对应 Encoded By)
-    has_tenc = any(fid == "TENC" for fid, _ in rebuilt_frames)
-    if not has_tenc:
-        for idx, (fid, payload) in enumerate(rebuilt_frames):
-            if fid == "TSSE":
-                rebuilt_frames[idx] = ("TENC", payload)
-                break
 
     if cover_data:
         rebuilt_frames.append(("APIC", build_apic_payload(cover_data)))
@@ -1585,6 +1573,7 @@ def main() -> int:
     )
     checkpoint_mtime: float | None = None
     checkpoint_blocked = False
+    processed_albums: dict[tuple[str, str], list[tuple[Path, int]]] = {}
     for file in files:
         try:
             if file.suffix.lower() == ".ncm":
@@ -1602,6 +1591,26 @@ def main() -> int:
                 continue
 
             successes += 1
+            
+            # 记录本批次已转换成功的歌曲，用于收尾时可能需要的多碟片总数回溯修正
+            album_name = result.album
+            album_artist = None
+            if result.netease_tags:
+                album_artist = result.netease_tags.get("ALBUMARTIST")
+            if not album_artist:
+                album_artist = result.artist
+            
+            disc_val = 1
+            if result.netease_tags and "DISCNUMBER" in result.netease_tags:
+                try:
+                    disc_val = int(result.netease_tags["DISCNUMBER"])
+                except:
+                    pass
+            if album_name and album_artist:
+                album_key = (album_name.strip().upper(), album_artist.strip().upper())
+                if album_key not in processed_albums:
+                    processed_albums[album_key] = []
+                processed_albums[album_key].append((result.output, disc_val))
             if auto_update_mtime and not checkpoint_blocked:
                 file_mtime = file.stat().st_mtime
                 checkpoint_mtime = file_mtime if checkpoint_mtime is None else max(checkpoint_mtime, file_mtime)
@@ -1623,6 +1632,48 @@ def main() -> int:
             failed_names.append(file.name)
             failed_paths.append(file.resolve())
             print(f"{file.name}：失败 - {exc}", file=sys.stderr)
+
+    # 针对多碟片（Deluxe/分CD等）专辑进行收尾时的总碟片数联动修正
+    if processed_albums:
+        for (album_name, album_artist), items in processed_albums.items():
+            max_disc = max(disc_val for _, disc_val in items)
+            if max_disc > 1:
+                for out_path, disc_val in items:
+                    try:
+                        ext = out_path.suffix.lower().lstrip(".")
+                        data = out_path.read_bytes()
+                        comments = {}
+                        if ext == "flac":
+                            comments = get_flac_comment_map(data)
+                        elif ext == "mp3":
+                            comments, _frames, _audio_start = parse_id3v2(data)
+                        
+                        current_total = comments.get("DISCTOTAL")
+                        if not current_total or current_total != str(max_disc):
+                            changed = False
+                            if ext == "flac":
+                                updated_data, changed = write_flac_tags(
+                                    data,
+                                    title=None,
+                                    album=None,
+                                    artists=[],
+                                    image_data=None,
+                                    extra_tags={"DISCTOTAL": str(max_disc)}
+                                )
+                            elif ext == "mp3":
+                                updated_data, changed = update_mp3_metadata(
+                                    data,
+                                    extra_tags={"DISCTOTAL": str(max_disc)},
+                                    title=None,
+                                    album=None,
+                                    artists=None,
+                                    cover_data=None
+                                )
+                            if changed:
+                                out_path.write_bytes(updated_data)
+                                print(f"  [修正总碟片数] 已更新《{out_path.name}》的专辑总碟片数为 {max_disc}。")
+                    except Exception as e:
+                        print(f"Warning: Failed to update DISCTOTAL for {out_path.name}: {e}", file=sys.stderr)
 
     print("")
     print(f"成功：{successes}")
