@@ -19,9 +19,26 @@ export interface TaskItem {
 }
 
 export interface ProgressMessage {
-  event: 'scan_result' | 'item_update' | 'batch_start' | 'batch_complete' | 'log';
+  event:
+    | 'scan_result'
+    | 'item_update'
+    | 'batch_start'
+    | 'batch_complete'
+    | 'log';
   total: number;
   completed: number;
   item?: TaskItem | null;
   message?: string | null;
+}
+
+export interface AppConfig {
+  input_dirs: string[];
+  output_dir: string;
+  recursive: boolean;
+  enrich_netease: boolean;
+  sort_by: 'name' | 'mtime' | 'mtime_desc';
+  enable_mtime_filter: boolean;
+  process_after_mtime: string;
+  auto_update_mtime: boolean;
+  only_process_failed: boolean;
 }

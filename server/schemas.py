@@ -31,15 +31,38 @@ class ScanRequest(BaseModel):
 
     paths: list[str] = Field(default_factory=list, description="List of file or directory paths to scan")
     recursive: bool = Field(default=False, description="Recursive directory search")
+    sort_by: Literal["name", "mtime", "mtime_desc"] = Field(default="name", description="Sorting method")
+    enable_mtime_filter: bool = Field(default=False, description="Enable modification timestamp filtering")
+    process_after_mtime: str | float | None = Field(default="", description="Filter by modification timestamp")
+    only_process_failed: bool = Field(default=False, description="Only scan fail.json paths")
 
 
 class StartBatchRequest(BaseModel):
     """Request payload for starting batch conversion."""
 
     paths: list[str] = Field(default_factory=list, description="Paths to process")
-    output_dir: str | None = Field(default=None, description="Output directory")
+    output_dir: str | None = Field(default="", description="Output directory")
     enrich_netease: bool = Field(default=True, description="Enrich metadata from NetEase Music API")
     recursive: bool = Field(default=False, description="Recursive search")
+    sort_by: Literal["name", "mtime", "mtime_desc"] = Field(default="name", description="Sorting method")
+    enable_mtime_filter: bool = Field(default=False, description="Enable modification timestamp filtering")
+    process_after_mtime: str | float | None = Field(default="", description="Filter by modification timestamp")
+    auto_update_mtime: bool = Field(default=True, description="Automatically update timestamp checkpoint")
+    only_process_failed: bool = Field(default=False, description="Only process failed list")
+
+
+class ConfigSchema(BaseModel):
+    """Schema for server configuration JSON."""
+
+    input_dirs: list[str] = Field(default_factory=list, description="Multiple input directory or file paths")
+    output_dir: str | None = Field(default="", description="Output directory")
+    recursive: bool = Field(default=False, description="Recursive scan")
+    enrich_netease: bool = Field(default=True, description="Enrich metadata from NetEase")
+    sort_by: Literal["name", "mtime", "mtime_desc"] = Field(default="name", description="Sorting method")
+    enable_mtime_filter: bool = Field(default=False, description="Enable modification timestamp filtering")
+    process_after_mtime: str | float | None = Field(default="", description="Filter by modification timestamp")
+    auto_update_mtime: bool = Field(default=True, description="Automatically update timestamp checkpoint")
+    only_process_failed: bool = Field(default=False, description="Only process failed list")
 
 
 class ProgressMessageSchema(BaseModel):

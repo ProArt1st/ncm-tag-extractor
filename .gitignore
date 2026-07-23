@@ -5,3 +5,4 @@ tests
 *.ncm
 *.mp3
 *.flac
+fail.json

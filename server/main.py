@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime
 import hashlib
+import json
 from pathlib import Path
 from typing import Any
 
@@ -10,8 +12,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 
+from config import (
+    format_config_mtime,
+    load_config,
+    parse_config_mtime,
+    save_config,
+)
 from core.processor import BatchProcessor, iter_media_files
 from server.schemas import (
+    ConfigSchema,
     ProgressMessageSchema,
     ScanRequest,
     StartBatchRequest,
@@ -44,14 +53,161 @@ async def health_check() -> dict[str, str]:
     return {"status": "ok", "service": "NCM Tag Extractor API"}
 
 
+@app.get("/api/config")
+async def get_config() -> dict[str, Any]:
+    """Get current configuration from config.json."""
+    config_path = Path(__file__).resolve().parent.parent / "config.json"
+    return load_config(config_path)
+
+
+@app.post("/api/config")
+async def update_config(req: ConfigSchema) -> dict[str, str]:
+    """Save configuration to config.json."""
+    config_path = Path(__file__).resolve().parent.parent / "config.json"
+    save_config(config_path, req.model_dump())
+    return {"status": "success", "message": "配置已成功保存至 config.json"}
+
+
+def popup_select_directory() -> str:
+    """Open native OS directory picker dialog using Tkinter."""
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        selected_dir = filedialog.askdirectory(parent=root, title="请选择音频文件夹")
+        root.destroy()
+        return selected_dir or ""
+    except Exception as e:
+        print(f"  [警告] 系统原生选择窗口不可用: {e}")
+        return ""
+
+
+def popup_select_files() -> list[str]:
+    """Open native OS file picker dialog using Tkinter."""
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        files = filedialog.askopenfilenames(
+            parent=root,
+            title="请选择音频文件",
+            filetypes=[
+                ("NCM / 音频文件", "*.ncm;*.flac;*.mp3"),
+                ("NCM 文件", "*.ncm"),
+                ("FLAC 文件", "*.flac"),
+                ("MP3 文件", "*.mp3"),
+                ("所有文件", "*.*"),
+            ],
+        )
+        root.destroy()
+        return list(files) if files else []
+    except Exception as e:
+        print(f"  [警告] 系统原生选择窗口不可用: {e}")
+        return []
+
+
+@app.post("/api/select-dir")
+async def select_directory() -> dict[str, Any]:
+    """Trigger native OS directory picker dialog."""
+    loop = asyncio.get_running_loop()
+    selected_path = await loop.run_in_executor(None, popup_select_directory)
+    if selected_path:
+        return {"status": "success", "path": str(Path(selected_path).resolve())}
+    return {"status": "cancelled", "path": ""}
+
+
+@app.post("/api/select-files")
+async def select_files() -> dict[str, Any]:
+    """Trigger native OS file picker dialog."""
+    loop = asyncio.get_running_loop()
+    selected_paths = await loop.run_in_executor(None, popup_select_files)
+    if selected_paths:
+        resolved_paths = [str(Path(p).resolve()) for p in selected_paths]
+        return {"status": "success", "paths": resolved_paths}
+    return {"status": "cancelled", "paths": []}
+
+
+@app.get("/api/failed-list")
+async def get_failed_list() -> list[dict[str, Any]]:
+    """Get list of failed items from fail.json."""
+    fail_file = Path(__file__).resolve().parent.parent / "fail.json"
+    if fail_file.is_file():
+        try:
+            data = json.loads(fail_file.read_text(encoding="utf-8"))
+            if isinstance(data, list):
+                return data
+        except Exception:
+            pass
+    return []
+
+
+def get_files_to_process(
+    paths: list[str],
+    recursive: bool,
+    extensions: set[str],
+    sort_by: str = "name",
+    enable_mtime_filter: bool = False,
+    process_after_mtime: str | float | None = None,
+    only_process_failed: bool = False,
+) -> list[Path]:
+    """Filter and sort media files according to parameters."""
+    script_dir = Path(__file__).resolve().parent.parent
+
+    if only_process_failed:
+        fail_file = script_dir / "fail.json"
+        if fail_file.is_file():
+            try:
+                data = json.loads(fail_file.read_text(encoding="utf-8"))
+                if isinstance(data, list):
+                    failed_paths = [
+                        Path(item["path"]).resolve()
+                        for item in data
+                        if isinstance(item, dict) and "path" in item
+                    ]
+                    valid_failed = [p for p in failed_paths if p.is_file()]
+                    if valid_failed:
+                        if sort_by == "mtime":
+                            valid_failed.sort(key=lambda f: (f.stat().st_mtime, str(f).casefold()))
+                        elif sort_by == "mtime_desc":
+                            valid_failed.sort(key=lambda f: (-f.stat().st_mtime, str(f).casefold()))
+                        elif sort_by == "name":
+                            valid_failed.sort(key=lambda f: str(f).casefold())
+                        return valid_failed
+            except Exception:
+                pass
+
+    valid_paths = [p.strip() for p in paths if p and p.strip()]
+    search_paths = [Path(p).expanduser().resolve() for p in valid_paths] if valid_paths else [script_dir]
+    files = iter_media_files(search_paths, recursive=recursive, extensions=extensions, sort_by=sort_by)
+
+    # Only apply mtime cutoff filter when enable_mtime_filter is explicitly True
+    if enable_mtime_filter and process_after_mtime:
+        mtime_cutoff = parse_config_mtime(process_after_mtime)
+        if mtime_cutoff is not None:
+            files = [f for f in files if f.stat().st_mtime > mtime_cutoff]
+
+    return files
+
+
 @app.post("/api/scan")
 async def scan_paths(req: ScanRequest) -> dict[str, Any]:
     """Scan directory or files for NCM/FLAC/MP3 files."""
-    script_dir = Path(__file__).resolve().parent.parent
-    valid_paths = [p.strip() for p in req.paths if p and p.strip()]
-    search_paths = [Path(p).expanduser().resolve() for p in valid_paths] if valid_paths else [script_dir]
     extensions = {".ncm", ".flac", ".mp3"}
-    found_files = iter_media_files(search_paths, recursive=req.recursive, extensions=extensions)
+    found_files = get_files_to_process(
+        paths=req.paths,
+        recursive=req.recursive,
+        extensions=extensions,
+        sort_by=req.sort_by,
+        enable_mtime_filter=req.enable_mtime_filter,
+        process_after_mtime=req.process_after_mtime,
+        only_process_failed=req.only_process_failed,
+    )
 
     items = []
     for f in found_files:
@@ -88,17 +244,25 @@ def run_batch_task(req: StartBatchRequest) -> None:
     CURRENT_BATCH_CANCELLED = False
 
     script_dir = Path(__file__).resolve().parent.parent
-    valid_paths = [p.strip() for p in req.paths if p and p.strip()]
-    search_paths = [Path(p).expanduser().resolve() for p in valid_paths] if valid_paths else [script_dir]
     output_dir = Path(req.output_dir).expanduser().resolve() if req.output_dir and req.output_dir.strip() else script_dir
     output_dir.mkdir(parents=True, exist_ok=True)
 
     extensions = {".ncm", ".flac", ".mp3"} if req.enrich_netease else {".ncm"}
-    files = iter_media_files(search_paths, recursive=req.recursive, extensions=extensions)
+    files = get_files_to_process(
+        paths=req.paths,
+        recursive=req.recursive,
+        extensions=extensions,
+        sort_by=req.sort_by,
+        enable_mtime_filter=req.enable_mtime_filter,
+        process_after_mtime=req.process_after_mtime,
+        only_process_failed=req.only_process_failed,
+    )
     total_count = len(files)
 
     processor = BatchProcessor()
     processed_albums: dict[tuple[str, str], list[tuple[Path, int]]] = {}
+    failed_items: list[dict[str, Any]] = []
+    checkpoint_mtime: float | None = None
 
     safe_broadcast(
         ProgressMessageSchema(event="batch_start", total=total_count, completed=0, message=f"[开始] 开始批处理任务 (共 {total_count} 个文件)")
@@ -151,10 +315,20 @@ def run_batch_task(req: StartBatchRequest) -> None:
             if result.netease_attempted and result.netease_missing:
                 item_schema.status = "failed"
                 item_schema.error_msg = f"网易云信息不完整: {', '.join(result.netease_missing)}"
+                failed_items.append({
+                    "path": str(file.resolve()),
+                    "name": file.name,
+                    "reason": item_schema.error_msg,
+                    "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                })
             else:
                 item_schema.status = "success"
                 item_schema.progress = 100
                 completed_count += 1
+
+                # Track max mtime
+                file_mtime = file.stat().st_mtime
+                checkpoint_mtime = file_mtime if checkpoint_mtime is None else max(checkpoint_mtime, file_mtime)
 
                 # Album tracking for multi-disc post-processing
                 album_name = result.album
@@ -174,20 +348,51 @@ def run_batch_task(req: StartBatchRequest) -> None:
         except Exception as exc:
             item_schema.status = "failed"
             item_schema.error_msg = str(exc)
+            failed_items.append({
+                "path": str(file.resolve()),
+                "name": file.name,
+                "reason": str(exc),
+                "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            })
 
+        log_msg = f"[{idx}/{total_count}] [成功] {file.name} -> {item_schema.output_path}" if item_schema.status == "success" else f"[{idx}/{total_count}] [失败] {file.name} (原因: {item_schema.error_msg})"
         safe_broadcast(
             ProgressMessageSchema(
                 event="item_update",
                 total=total_count,
                 completed=completed_count,
                 item=item_schema,
-                message=f"[{idx}/{total_count}] [成功] {file.name}" if item_schema.status == "success" else f"[{idx}/{total_count}] [失败] {file.name}",
+                message=log_msg,
             )
         )
 
     # Multi-disc post-processing
     if processed_albums:
         processor.post_process_albums(processed_albums)
+
+    # Manage fail.json
+    fail_file = script_dir / "fail.json"
+    if failed_items:
+        fail_file.write_text(json.dumps(failed_items, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    elif fail_file.is_file() and not CURRENT_BATCH_CANCELLED:
+        try:
+            fail_file.unlink()
+        except Exception:
+            pass
+
+    # Auto update mtime in config.json
+    if req.auto_update_mtime and checkpoint_mtime is not None:
+        config_file = script_dir / "config.json"
+        current_cfg = load_config(config_file)
+        formatted_mtime = format_config_mtime(checkpoint_mtime)
+        current_cfg["process_after_mtime"] = formatted_mtime
+        save_config(config_file, current_cfg)
+        safe_broadcast(
+            ProgressMessageSchema(
+                event="log",
+                message=f"[配置] 转换时间节点已自动更新保存至 config.json: {formatted_mtime}",
+            )
+        )
 
     IS_PROCESSING = False
     safe_broadcast(

@@ -1,23 +1,31 @@
 from __future__ import annotations
 
+import json
 import re
-import tomllib
 from datetime import date, datetime, time as date_time
 from pathlib import Path
 from typing import Any
 
-DEFAULT_CONFIG_NAME = "ncm_to_audio_config.toml"
+DEFAULT_CONFIG_NAME = "config.json"
 
 
 def load_config(config_path: Path) -> dict[str, Any]:
-    """Load TOML configuration file."""
+    """Load JSON configuration file."""
     if not config_path.is_file():
         return {}
-    with config_path.open("rb") as fp:
-        data = tomllib.load(fp)
-    if not isinstance(data, dict):
-        raise ValueError("配置文件根对象必须是 TOML table")
-    return data
+    try:
+        data = json.loads(config_path.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            return data
+    except Exception:
+        pass
+    return {}
+
+
+def save_config(config_path: Path, data: dict[str, Any]) -> None:
+    """Save dictionary configuration back to JSON file."""
+    content = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
+    config_path.write_text(content, encoding="utf-8")
 
 
 def coerce_path_list(value: object) -> list[str]:
@@ -85,8 +93,8 @@ def parse_config_mtime(value: object) -> float | None:
 
 
 def format_config_mtime(timestamp: float) -> str:
-    """Format float timestamp to ISO string."""
-    return datetime.fromtimestamp(timestamp).isoformat(sep=" ", timespec="microseconds")
+    """Format float timestamp to clean YYYY-MM-DD HH:mm:ss string."""
+    return datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def update_config_mtime_checkpoint(config_path: Path, timestamp: float) -> None:
