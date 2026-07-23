@@ -1,8 +1,36 @@
-venv
-__pycache__
+# Python 虚拟环境 & 缓存
+.venv/
+venv/
+__pycache__/
 *.pyc
-tests
-*.ncm
-*.mp3
-*.flac
+*.pyo
+*.pyd
+
+# PyInstaller 打包产物
+build/
+dist/
+*.spec
+
+# Node.js 依赖与前端编译产物
+web/node_modules/
+web/dist/
+.npm
+
+# 本地运行时配置与失败记录文件
+config.json
 fail.json
+failed_list.txt
+ncm_to_audio_config.toml
+
+# 测试音频文件与输出目录
+*.ncm
+*.flac
+*.mp3
+output/
+tests/
+
+# IDE 与系统临时文件
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
