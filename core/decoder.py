@@ -16,7 +16,14 @@ NCM_MAGIC = b"CTENFDAM"
 def aes_ecb_decrypt(data: bytes, key: bytes) -> bytes:
     """Decrypt AES-128-ECB encrypted data and unpad PKCS7."""
     cipher = AES.new(key, AES.MODE_ECB)
-    return unpad(cipher.decrypt(data), 16)
+    decrypted = cipher.decrypt(data)
+    try:
+        return unpad(decrypted, 16)
+    except Exception:
+        pad = decrypted[-1]
+        if 1 <= pad <= 16 and decrypted[-pad:] == bytes([pad]) * pad:
+            return decrypted[:-pad]
+        return decrypted
 
 
 def detect_audio_ext(data: bytes, fallback: str = "mp3") -> str:

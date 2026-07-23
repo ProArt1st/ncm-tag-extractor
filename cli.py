@@ -19,18 +19,20 @@ from core.processor import BatchProcessor, iter_media_files
 
 
 def prompt_run_mode() -> str:
-    """Prompt user to select run mode."""
-    print("请选择模式：")
-    print("1. 仅转换 NCM")
-    print("2. 转换 NCM 并从网易云音乐补充元数据信息")
+    """Prompt user to select run mode (default: Mode 2 Online Enrich)."""
+    print("请选择运行模式 [默认 2]:")
+    print("1. 仅本地解密 NCM (离线模式)")
+    print("2. 转换并从网易云补充高保真元数据 & 原画封面 (推荐)")
     while True:
         try:
-            choice = input("请输入 1 或 2：").strip()
+            choice = input("请输入 1 或 2 [默认 2]: ").strip()
         except EOFError:
-            return "1"
+            return "2"
+        if choice == "":
+            return "2"
         if choice in {"1", "2"}:
             return choice
-        print("请输入 1 或 2。")
+        print("请输入 1 或 2 [默认 2]。")
 
 
 def main() -> int:
@@ -159,21 +161,21 @@ def main() -> int:
                 checkpoint_mtime = file_mtime if checkpoint_mtime is None else max(checkpoint_mtime, file_mtime)
 
             if enrich_netease and result.netease_attempted:
-                print(f"{file.name}：成功（已补充网易云元数据）")
+                print(f"  [成功] {file.name}")
             elif enrich_netease:
-                print(f"{file.name}：成功（无需补充）")
+                print(f"  [成功] {file.name}")
             else:
-                print(f"{file.name}：成功")
+                print(f"  [成功] {file.name}")
 
             if result.warnings:
-                print(f"  [警告] 缺失信息：{', '.join(result.warnings)}")
+                print(f"  [警告] 缺失信息: {', '.join(result.warnings)}")
 
         except Exception as exc:
             failures += 1
             checkpoint_blocked = True
             failed_names.append(file.name)
             failed_paths.append(file.resolve())
-            print(f"{file.name}：失败 - {exc}", file=sys.stderr)
+            print(f"  [失败] {file.name} - {exc}", file=sys.stderr)
 
     # Post-process multi-disc albums for DISCTOTAL correction
     if processed_albums:

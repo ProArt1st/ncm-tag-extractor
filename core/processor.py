@@ -66,18 +66,21 @@ class BatchProcessor:
         cover_data = cover
         extra_tags: dict[str, str] | None = None
 
-        if enrich_netease and music_id:
-            netease_attempted = True
-            extra_tags = self.client.fetch_tags(music_id, title=title)
-            wanted = {"ALBUMARTIST", "DATE", "TRACKNUMBER", "TRACKTOTAL", "DISCNUMBER", "DISCTOTAL"}
-            netease_missing = [key for key in wanted if not extra_tags.get(key)]
-            netease_tags = dict(extra_tags)
-            if extra_tags and "COVER_URL" in extra_tags:
-                downloaded = self.client.download_image(extra_tags["COVER_URL"])
-                if downloaded:
-                    cover_data = downloaded
-            if extra_tags:
-                extra_tags.pop("COVER_URL", None)
+        if enrich_netease:
+            if not music_id and title:
+                music_id = self.client.search_music_id(title, artists)
+            if music_id:
+                netease_attempted = True
+                extra_tags = self.client.fetch_tags(music_id, title=title)
+                wanted = {"ALBUMARTIST", "DATE", "TRACKNUMBER", "TRACKTOTAL", "DISCNUMBER", "DISCTOTAL"}
+                netease_missing = [key for key in wanted if not extra_tags.get(key)]
+                netease_tags = dict(extra_tags)
+                if extra_tags and "COVER_URL" in extra_tags:
+                    downloaded = self.client.download_image(extra_tags["COVER_URL"])
+                    if downloaded:
+                        cover_data = downloaded
+                if extra_tags:
+                    extra_tags.pop("COVER_URL", None)
 
         if ext == "flac":
             audio, changed = update_flac_metadata(audio, title, album, artists, cover_data, extra_tags=extra_tags)
@@ -148,9 +151,11 @@ class BatchProcessor:
         cover_data = None
         cover_embedded = False
 
-        if is_163_key:
-            extra_tags: dict[str, str] = {}
-            if enrich_netease and music_id:
+        extra_tags: dict[str, str] = {}
+        if enrich_netease:
+            if not music_id and title:
+                music_id = self.client.search_music_id(title, artists)
+            if music_id:
                 netease_attempted = True
                 extra_tags = self.client.fetch_tags(music_id, title=title)
                 wanted = {"ALBUMARTIST", "DATE", "TRACKNUMBER", "TRACKTOTAL", "DISCNUMBER", "DISCTOTAL"}
@@ -163,18 +168,18 @@ class BatchProcessor:
                 if extra_tags:
                     extra_tags.pop("COVER_URL", None)
 
-            if ext == "flac":
-                data, changed = update_flac_metadata(
-                    data, title, album, artists, cover_data, extra_tags=extra_tags or None
-                )
-                tags_written = changed
-                cover_embedded = changed and cover_data is not None
-            elif ext == "mp3":
-                data, changed = update_mp3_metadata(
-                    data, extra_tags, title=title, album=album, artists=artists, cover_data=cover_data
-                )
-                tags_written = changed
-                cover_embedded = changed and cover_data is not None
+        if ext == "flac":
+            data, changed = update_flac_metadata(
+                data, title, album, artists, cover_data, extra_tags=extra_tags or None
+            )
+            tags_written = changed
+            cover_embedded = changed and cover_data is not None
+        elif ext == "mp3":
+            data, changed = update_mp3_metadata(
+                data, extra_tags, title=title, album=album, artists=artists, cover_data=cover_data
+            )
+            tags_written = changed
+            cover_embedded = changed and cover_data is not None
 
         output_path = output_dir / path.name
         if output_path.resolve() != path.resolve() or tags_written:
@@ -237,9 +242,9 @@ class BatchProcessor:
                                 )
                             if changed:
                                 out_path.write_bytes(updated_data)
-                                print(f"  [修正总碟片数] 已更新《{out_path.name}》的专辑总碟片数为 {max_disc}。")
+                                print(f"  [修正] 总碟片数 DISCTOTAL={max_disc} ({out_path.name})")
                     except Exception as e:
-                        print(f"Warning: Failed to update DISCTOTAL for {out_path.name}: {e}", file=sys.stderr)
+                        print(f"  [警告] 修正 DISCTOTAL 失败 ({out_path.name}): {e}", file=sys.stderr)
 
 
 def iter_media_files(

@@ -198,11 +198,10 @@ def update_mp3_metadata(
 ) -> tuple[bytes, bool]:
     """Update MP3 ID3v2 tags using Mutagen."""
     extra_tags = extra_tags or {}
-    bio = io.BytesIO(mp3_data)
-
+    
     try:
-        tags = ID3(bio)
-    except ID3NoHeaderError:
+        tags = ID3(io.BytesIO(mp3_data))
+    except (ID3NoHeaderError, Exception):
         tags = ID3()
 
     # Blacklisted frames removal (Comments, URLs, Encoder frames)
@@ -293,9 +292,32 @@ def update_mp3_metadata(
             )
         )
 
-    bio.seek(0)
-    tags.save(bio, v2_version=4)
-    return bio.getvalue(), True
+    # Save ID3 tags to a clean memory buffer
+    tag_bio = io.BytesIO()
+    tags.save(tag_bio, v2_version=4)
+    new_id3_bytes = tag_bio.getvalue()
+
+    # Safely separate original audio frames from old ID3 headers
+    audio_start = 0
+    if mp3_data.startswith(b"ID3") and len(mp3_data) >= 10:
+        size_bytes = mp3_data[6:10]
+        tag_size = (
+            (size_bytes[0] & 0x7F) << 21
+            | (size_bytes[1] & 0x7F) << 14
+            | (size_bytes[2] & 0x7F) << 7
+            | (size_bytes[3] & 0x7F)
+        )
+        audio_start = 10 + tag_size
+        if audio_start > len(mp3_data):
+            audio_start = 0
+
+    audio_payload = mp3_data[audio_start:]
+
+    # Remove old ID3v1 footer if present
+    if len(audio_payload) >= 128 and audio_payload[-128:-125] == b"TAG":
+        audio_payload = audio_payload[:-128]
+
+    return new_id3_bytes + audio_payload, True
 
 
 def get_audio_comments(data: bytes, ext: str) -> dict[str, str]:
@@ -332,15 +354,21 @@ def get_audio_comments(data: bytes, ext: str) -> dict[str, str]:
             }
             for frame in tags.values():
                 fid = frame.FrameID
+                frame_text_str = (
+                    ";".join(str(val) for val in frame.text)
+                    if hasattr(frame, "text") and isinstance(frame.text, list)
+                    else str(getattr(frame, "text", ""))
+                )
                 if fid == "USLT":
-                    comments["LYRICS"] = str(frame.text)
+                    comments["LYRICS"] = frame_text_str
                 elif fid == "COMM":
-                    comments["COMMENT"] = str(frame.text)
+                    if frame_text_str.strip().startswith("163 key(Don't modify):") or "COMMENT" not in comments:
+                        comments["COMMENT"] = frame_text_str
                 elif fid == "WXXX":
-                    comments["URL"] = str(frame.url)
+                    comments["URL"] = str(getattr(frame, "url", ""))
                 key = text_map.get(fid)
                 if key:
-                    text_val = ";".join(str(val) for val in frame.text)
+                    text_val = frame_text_str
                     if fid == "TRCK":
                         n, _, t = text_val.partition("/")
                         if n.strip():

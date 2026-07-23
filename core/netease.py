@@ -9,6 +9,8 @@ from typing import Any
 
 import httpx
 
+from urllib.parse import quote
+
 NETEASE_TAGS_CACHE: dict[int | str, dict[str, str]] = {}
 COVER_IMAGE_CACHE: dict[str, bytes | None] = {}
 
@@ -89,10 +91,15 @@ def merge_bilingual_lyrics(lyric_text: str, tlyric_text: str) -> str:
 class NetEaseClient:
     """HTTP client for NetEase Cloud Music API powered by HTTPX."""
 
-    def __init__(self, retries: int = 3, backoff: float = 2.0) -> None:
+    def __init__(self, retries: int = 3, backoff: float = 1.5) -> None:
         self.retries = retries
         self.backoff = backoff
-        self.client = httpx.Client(headers=HEADERS, timeout=10.0, follow_redirects=True)
+        self.client = httpx.Client(
+            headers=HEADERS,
+            timeout=5.0,
+            follow_redirects=True,
+            limits=httpx.Limits(max_keepalive_connections=0, max_connections=10),
+        )
 
     def fetch_json(self, url: str) -> dict[str, Any]:
         delay = self.backoff
@@ -108,10 +115,33 @@ class NetEaseClient:
                     raise e
                 if attempt == self.retries - 1:
                     raise e
-                print(f"  [重试] API 请求失败 (第 {attempt + 1}/{self.retries} 次尝试): {e}。将在 {delay} 秒后重试...", file=sys.stderr)
+                print(f"  [重试] 网络请求 ({attempt + 1}/{self.retries}): {e}", file=sys.stderr)
                 time.sleep(delay)
-                delay *= 2
+                delay *= 1.5
         raise RuntimeError("Max retries exceeded")
+
+    def search_music_id(self, title: str, artists: list[str] | None = None) -> int | str | None:
+        """Search NetEase Cloud Music API by title and artists to find musicId."""
+        if not title:
+            return None
+        query = title
+        if artists:
+            clean_artists = [a.strip() for a in artists if a.strip()]
+            if clean_artists:
+                query += " " + " ".join(clean_artists[:2])
+        time.sleep(0.3)  # Anti-scraping delay
+        url = f"http://music.163.com/api/search/get/web?s={quote(query)}&type=1&offset=0&limit=1"
+        try:
+            data = self.fetch_json(url)
+            songs = data.get("result", {}).get("songs")
+            if isinstance(songs, list) and songs:
+                music_id = songs[0].get("id")
+                if music_id:
+                    print(f"  [网易云] 匹配 ID: {music_id} ({title})")
+                    return music_id
+        except Exception as e:
+            print(f"Warning: NetEase search failed for query '{query}': {e}", file=sys.stderr)
+        return None
 
     def download_image(self, url: str) -> bytes | None:
         if not url:
@@ -181,13 +211,13 @@ class NetEaseClient:
                         pass
 
                 # Track Number (force >=1)
-                song_name = song.get("name") or "未知歌曲"
+                song_name = song.get("name") or "未知"
                 track_no = song.get("no")
                 if track_no not in (None, ""):
                     try:
                         track_val = int(track_no)
                         if track_val < 1:
-                            print(f"  [修正] 歌曲《{song_name}》(ID: {music_id}) 的音轨号为 {track_no}，已修正为 1。")
+                            print(f"  [修正] 音轨号 {track_no} -> 1 ({song_name})")
                             track_no = "1"
                         else:
                             track_no = str(track_val)
@@ -201,7 +231,7 @@ class NetEaseClient:
                     try:
                         total_val = int(track_total)
                         if total_val <= 0:
-                            print(f"  [修正] 歌曲《{song_name}》(ID: {music_id}) 的总音轨数为 {track_total}，已修正为 1。")
+                            print(f"  [修正] 总音轨数 {track_total} -> 1 ({song_name})")
                             track_total = "1"
                         else:
                             track_total = str(total_val)
@@ -216,7 +246,7 @@ class NetEaseClient:
                     try:
                         parsed_val = int(disc)
                         if parsed_val < 1:
-                            print(f"  [修正] 歌曲《{song_name}》(ID: {music_id}) 的碟片号为 {disc}，已修正为 1。")
+                            print(f"  [修正] 碟片号 {disc} -> 1 ({song_name})")
                             disc_val = 1
                         else:
                             disc_val = parsed_val
