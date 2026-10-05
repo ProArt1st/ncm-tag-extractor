@@ -8,6 +8,56 @@ from typing import Any
 
 DEFAULT_CONFIG_NAME = "config.json"
 
+DEFAULT_CONFIG: dict[str, Any] = {
+    "input_dirs": [],
+    "output_dir": "",
+    "recursive": True,
+    "enrich_netease": True,
+    "sort_by": "name",
+    "enable_mtime_filter": False,
+    "process_after_mtime": "",
+    "auto_update_mtime": True,
+    "only_process_failed": False,
+}
+
+
+def get_app_dir() -> Path:
+    """Get application base directory (supports frozen binary like PyInstaller/AppImage)."""
+    import sys
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent.parent
+
+
+def get_default_config_path() -> Path:
+    """Get default config.json path in the application directory."""
+    return get_app_dir() / DEFAULT_CONFIG_NAME
+
+
+def get_or_create_config(config_path: Path | None = None) -> tuple[dict[str, Any], Path]:
+    """Load config.json, or create it with defaults if it does not exist."""
+    path = config_path or get_default_config_path()
+    if not path.is_file():
+        cfg = dict(DEFAULT_CONFIG)
+        save_config(path, cfg)
+        return cfg, path
+
+    loaded = load_config(path)
+    dirty = False
+    merged = dict(DEFAULT_CONFIG)
+    for k, v in loaded.items():
+        merged[k] = v
+
+    # Check if any default key was missing
+    for k in DEFAULT_CONFIG:
+        if k not in loaded:
+            dirty = True
+
+    if dirty:
+        save_config(path, merged)
+
+    return merged, path
+
 
 def load_config(config_path: Path) -> dict[str, Any]:
     """Load JSON configuration file."""
