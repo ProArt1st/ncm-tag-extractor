@@ -218,7 +218,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self, config_path: Path | None = None) -> None:
         super().__init__()
-        self.setWindowTitle("NCM 音频解密与元数据提取器")
+        self.setWindowTitle("NCM Tag Extractor")
         self.resize(1020, 740)
         self.setMinimumSize(800, 560)
         self.setStyleSheet(DARK_THEME_QSS)

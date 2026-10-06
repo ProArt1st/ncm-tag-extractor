@@ -119,7 +119,7 @@ def create_linux_appdir(binary_path: Path) -> Path:
     desktop_content = f"""[Desktop Entry]
 Type=Application
 Name=NCM Tag Extractor
-Comment=NCM 音频解密与元数据提取器
+Comment=NCM Tag Extractor
 Exec={APP_NAME} %F
 Icon=ncm-tag-extractor
 Categories=AudioVideo;Audio;AudioVideoEditing;

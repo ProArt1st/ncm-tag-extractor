@@ -25,7 +25,7 @@ def main() -> int:
 
     app = QApplication(sys.argv)
     app.setApplicationName("NCMTagExtractor")
-    app.setApplicationDisplayName("NCM 音频解密与元数据提取器")
+    app.setApplicationDisplayName("NCM Tag Extractor")
 
     config_path = get_default_config_path()
     window = MainWindow(config_path=config_path)
