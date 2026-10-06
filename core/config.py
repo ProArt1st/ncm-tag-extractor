@@ -23,9 +23,19 @@ DEFAULT_CONFIG: dict[str, Any] = {
 
 def get_app_dir() -> Path:
     """Get application base directory (supports frozen binary like PyInstaller/AppImage)."""
+    import os
     import sys
+
+    # 1. Linux AppImage: use the directory where the .AppImage file resides
+    appimage_path = os.environ.get("APPIMAGE")
+    if appimage_path:
+        return Path(appimage_path).resolve().parent
+
+    # 2. Frozen binary (Windows .exe or standalone Linux binary)
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve().parent
+
+    # 3. Source code development mode
     return Path(__file__).resolve().parent.parent
 
 
@@ -74,6 +84,7 @@ def load_config(config_path: Path) -> dict[str, Any]:
 
 def save_config(config_path: Path, data: dict[str, Any]) -> None:
     """Save dictionary configuration back to JSON file."""
+    config_path.parent.mkdir(parents=True, exist_ok=True)
     content = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
     config_path.write_text(content, encoding="utf-8")
 

@@ -43,7 +43,9 @@ from PySide6.QtWidgets import (
 )
 
 from core.config import (
+    DEFAULT_CONFIG,
     format_config_mtime,
+    get_default_config_path,
     get_or_create_config,
     save_config,
 )
@@ -222,7 +224,19 @@ class MainWindow(QMainWindow):
         self.setStyleSheet(DARK_THEME_QSS)
         self.setAcceptDrops(True)
 
-        self.config, self.config_path = get_or_create_config(config_path)
+        try:
+            self.config, self.config_path = get_or_create_config(config_path)
+            self._config_write_error = False
+        except OSError as e:
+            self.config = dict(DEFAULT_CONFIG)
+            self.config_path = config_path or get_default_config_path()
+            self._config_write_error = True
+            QMessageBox.critical(
+                self,
+                "配置文件创建失败",
+                f"检测到程序所在目录为只读或无写入权限，无法创建配置文件：\n\n{self.config_path}\n\n错误原因: {e}\n\n应用将以临时默认配置启动，但在只读环境下修改的设置将无法保存。",
+            )
+
         self.worker: ConvertWorker | None = None
         self._is_saving_config = False
 
@@ -600,7 +614,17 @@ class MainWindow(QMainWindow):
         }
 
         self.config = new_cfg
-        save_config(self.config_path, new_cfg)
+        try:
+            save_config(self.config_path, new_cfg)
+            self._config_write_error = False
+        except OSError as e:
+            if not getattr(self, "_config_write_error", False):
+                self._config_write_error = True
+                QMessageBox.critical(
+                    self,
+                    "配置文件保存失败",
+                    f"无法将修改写入配置文件：\n\n{self.config_path}\n\n错误原因: {e}\n\n请检查程序所在目录是否具有写权限。",
+                )
 
     def _on_config_changed(self) -> None:
         self._save_ui_to_config()
