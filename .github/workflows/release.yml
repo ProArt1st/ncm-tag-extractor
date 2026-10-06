@@ -96,22 +96,25 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: NCMTagExtractor-Windows-x86_64
+          path: NCMTagExtractor-Windows-x86_64
 
       - name: Download Linux Artifact
         uses: actions/download-artifact@v4
         with:
           name: NCMTagExtractor-Linux-x86_64
+          path: NCMTagExtractor-Linux-x86_64
 
-      - name: Create Windows Zip Package
+      - name: Create Nested Zip Packages
         run: |
-          zip -j NCMTagExtractor-Windows-x86_64.zip NCMTagExtractor-Windows-x86_64.exe
+          chmod +x NCMTagExtractor-Linux-x86_64/NCMTagExtractor-Linux-x86_64.AppImage
+          zip -r NCMTagExtractor-Windows-x86_64.zip NCMTagExtractor-Windows-x86_64
+          zip -r NCMTagExtractor-Linux-x86_64.zip NCMTagExtractor-Linux-x86_64
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ inputs.tag_name != '' && inputs.tag_name || github.ref_name }}
           files: |
-            NCMTagExtractor-Windows-x86_64.exe
             NCMTagExtractor-Windows-x86_64.zip
-            NCMTagExtractor-Linux-x86_64.AppImage
+            NCMTagExtractor-Linux-x86_64.zip
           generate_release_notes: true
