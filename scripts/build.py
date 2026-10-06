@@ -153,10 +153,10 @@ def package_appimage(appdir: Path) -> None:
         print("   如果你想生成单文件 .AppImage，请下载 appimagetool：")
         print("   wget https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage")
         print("   chmod +x appimagetool-x86_64.AppImage")
-        print(f"   ./appimagetool-x86_64.AppImage {appdir} dist/{APP_NAME}-x86_64.AppImage")
+        print(f"   ./appimagetool-x86_64.AppImage {appdir} dist/{APP_NAME}-Linux-x86_64.AppImage")
         return
 
-    output_appimage = DIST_DIR / f"{APP_NAME}-x86_64.AppImage"
+    output_appimage = DIST_DIR / f"{APP_NAME}-Linux-x86_64.AppImage"
     print(f"[BUILD] 正在使用 appimagetool 生成 {output_appimage.name} ...")
     cmd = [tool, str(appdir), str(output_appimage)]
     env = dict(os.environ)
@@ -178,6 +178,12 @@ def main() -> None:
         appdir = create_linux_appdir(binary_path)
         package_appimage(appdir)
     elif system == "Windows":
+        win_binary = DIST_DIR / f"{APP_NAME}-Windows-x86_64.exe"
+        if binary_path != win_binary and binary_path.is_file():
+            if win_binary.is_file():
+                win_binary.unlink()
+            binary_path.rename(win_binary)
+            binary_path = win_binary
         print(f"[SUCCESS] Windows 单文件免安装绿色版生成成功: {binary_path}")
 
 
