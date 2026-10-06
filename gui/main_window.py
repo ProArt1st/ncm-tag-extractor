@@ -736,14 +736,14 @@ class MainWindow(QMainWindow):
             file_filter="音频文件 (*.ncm *.flac *.mp3);;所有文件 (*.*)",
         )
         if files:
-            target_file = files[0]
+            target_path = Path(files[0])
             try:
-                mtime = target_file.stat().st_mtime
+                mtime = target_path.stat().st_mtime
                 dt_str = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S")
                 self.time_picker.set_datetime_str(dt_str)
                 self.chk_mtime_filter.setChecked(True)
                 self._save_ui_to_config()
-                self._append_log(f"已从文件获取时间戳: {target_file.name} -> {dt_str}", "info")
+                self._append_log(f"已从文件获取时间戳: {target_path.name} -> {dt_str}", "info")
             except Exception as e:
                 QMessageBox.warning(self, "读取失败", f"无法读取文件时间戳: {e}")
 
