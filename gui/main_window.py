@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -205,12 +205,32 @@ class SplitDateTimeWidget(QWidget):
         except Exception:
             pass
 
-    def to_secs_since_epoch(self) -> int:
+    def to_secs_since_epoch(self, is_utc: bool = False) -> int:
         try:
             dt = datetime.strptime(self.get_datetime_str(), "%Y-%m-%d %H:%M:%S")
+            if is_utc:
+                dt = dt.replace(tzinfo=timezone.utc)
             return int(dt.timestamp())
         except Exception:
             return 0
+
+    def convert_timezone(self, to_utc: bool) -> None:
+        try:
+            cur_str = self.get_datetime_str()
+            dt = datetime.strptime(cur_str, "%Y-%m-%d %H:%M:%S")
+            local_tz = datetime.now().astimezone().tzinfo
+            if to_utc:
+                # Currently local time, convert to UTC
+                dt_local = dt.replace(tzinfo=local_tz)
+                dt_utc = dt_local.astimezone(timezone.utc)
+                self.set_datetime_str(dt_utc.strftime("%Y-%m-%d %H:%M:%S"))
+            else:
+                # Currently UTC, convert to local time
+                dt_utc = dt.replace(tzinfo=timezone.utc)
+                dt_local = dt_utc.astimezone(local_tz)
+                self.set_datetime_str(dt_local.strftime("%Y-%m-%d %H:%M:%S"))
+        except Exception:
+            pass
 
 
 class MainWindow(QMainWindow):
@@ -429,6 +449,16 @@ class MainWindow(QMainWindow):
 
         opts_row2.addStretch()
 
+        lbl_tz = QLabel("时间基准:")
+        lbl_tz.setStyleSheet("color: #8b8ea4; font-size: 12px;")
+        opts_row2.addWidget(lbl_tz)
+
+        self.combo_tz = QComboBox()
+        self.combo_tz.addItem("本地时间", "local")
+        self.combo_tz.addItem("UTC时间", "utc")
+        self.combo_tz.currentIndexChanged.connect(self._on_tz_changed)
+        opts_row2.addWidget(self.combo_tz)
+
         opts_layout.addLayout(opts_row2)
         main_layout.addWidget(opts_card)
 
@@ -587,6 +617,11 @@ class MainWindow(QMainWindow):
             else:
                 self.time_picker.set_datetime_str(datetime.now().strftime("%Y-%m-%d 00:00:00"))
 
+            tz_mode = str(self.config.get("mtime_tz") or "local")
+            tz_idx = self.combo_tz.findData(tz_mode)
+            if tz_idx >= 0:
+                self.combo_tz.setCurrentIndex(tz_idx)
+
         finally:
             self._is_saving_config = False
 
@@ -600,6 +635,7 @@ class MainWindow(QMainWindow):
         output_dir = self.output_edit.text().strip()
         sort_by = self.combo_sort.currentData() or "name"
         mtime_str = self.time_picker.get_datetime_str()
+        mtime_tz = self.combo_tz.currentData() or "local"
 
         new_cfg = {
             "input_dirs": input_dirs,
@@ -609,6 +645,7 @@ class MainWindow(QMainWindow):
             "sort_by": sort_by,
             "enable_mtime_filter": self.chk_mtime_filter.isChecked(),
             "process_after_mtime": mtime_str,
+            "mtime_tz": mtime_tz,
             "auto_update_mtime": self.chk_auto_mtime.isChecked(),
             "only_process_failed": self.chk_only_failed.isChecked(),
         }
@@ -625,6 +662,13 @@ class MainWindow(QMainWindow):
                     "配置文件保存失败",
                     f"无法将修改写入配置文件：\n\n{self.config_path}\n\n错误原因: {e}\n\n请检查程序所在目录是否具有写权限。",
                 )
+
+    def _on_tz_changed(self) -> None:
+        if getattr(self, "_is_saving_config", False):
+            return
+        is_utc = (self.combo_tz.currentData() == "utc")
+        self.time_picker.convert_timezone(to_utc=is_utc)
+        self._save_ui_to_config()
 
     def _on_config_changed(self) -> None:
         self._save_ui_to_config()
@@ -739,7 +783,11 @@ class MainWindow(QMainWindow):
             target_path = Path(files[0])
             try:
                 mtime = target_path.stat().st_mtime
-                dt_str = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S")
+                is_utc = (self.combo_tz.currentData() == "utc")
+                if is_utc:
+                    dt_str = datetime.fromtimestamp(mtime, timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+                else:
+                    dt_str = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S")
                 self.time_picker.set_datetime_str(dt_str)
                 self.chk_mtime_filter.setChecked(True)
                 self._save_ui_to_config()
@@ -791,7 +839,8 @@ class MainWindow(QMainWindow):
         )
 
         if self.chk_mtime_filter.isChecked():
-            cutoff = self.time_picker.to_secs_since_epoch()
+            is_utc = (self.combo_tz.currentData() == "utc")
+            cutoff = self.time_picker.to_secs_since_epoch(is_utc=is_utc)
             found_files = [f for f in found_files if f.stat().st_mtime >= cutoff]
 
         return found_files
@@ -804,7 +853,8 @@ class MainWindow(QMainWindow):
             )
             return
 
-        dialog = PreCheckDialog(files, self)
+        is_utc = (self.combo_tz.currentData() == "utc")
+        dialog = PreCheckDialog(files, is_utc=is_utc, parent=self)
         dialog.sig_start_requested.connect(lambda: QTimer.singleShot(100, self._on_start_clicked))
         dialog.exec()
 
@@ -887,11 +937,13 @@ class MainWindow(QMainWindow):
         self.lbl_status.setText("转换中...")
         self.lbl_counts.setText(f"总计 {len(files)} · 成功 0 · 失败 0")
 
+        is_utc = (self.combo_tz.currentData() == "utc")
         self.worker = ConvertWorker(
             files=files,
             output_dir=output_dir,
             enrich_netease=self.chk_enrich.isChecked(),
             auto_update_mtime=self.chk_auto_mtime.isChecked(),
+            is_utc=is_utc,
             config_path=self.config_path,
         )
         self.worker.sig_batch_start.connect(self._on_worker_batch_start)

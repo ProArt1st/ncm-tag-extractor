@@ -31,6 +31,7 @@ class ConvertWorker(QThread):
         output_dir: Path | None = None,
         enrich_netease: bool = True,
         auto_update_mtime: bool = True,
+        is_utc: bool = False,
         config_path: Path | None = None,
         parent=None,
     ) -> None:
@@ -39,6 +40,7 @@ class ConvertWorker(QThread):
         self.output_dir = output_dir
         self.enrich_netease = enrich_netease
         self.auto_update_mtime = auto_update_mtime
+        self.is_utc = is_utc
         self.config_path = config_path or get_default_config_path()
         self._is_cancelled = False
 
@@ -210,7 +212,7 @@ class ConvertWorker(QThread):
         if self.auto_update_mtime and checkpoint_mtime is not None:
             try:
                 current_cfg = load_config(self.config_path)
-                formatted_mtime = format_config_mtime(checkpoint_mtime)
+                formatted_mtime = format_config_mtime(checkpoint_mtime, is_utc=self.is_utc)
                 current_cfg["process_after_mtime"] = formatted_mtime
                 save_config(self.config_path, current_cfg)
                 self.sig_log.emit(f"已更新时间节点配置: {formatted_mtime}", "info")

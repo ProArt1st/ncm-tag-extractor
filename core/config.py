@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import date, datetime, time as date_time
+from datetime import date, datetime, time as date_time, timezone
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +16,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "sort_by": "name",
     "enable_mtime_filter": False,
     "process_after_mtime": "",
+    "mtime_tz": "local",
     "auto_update_mtime": True,
     "only_process_failed": False,
 }
@@ -128,7 +129,7 @@ def config_bool(value: object, default: bool = False, name: str = "配置项") -
     raise ValueError(f"{name} 必须是 true/false")
 
 
-def parse_config_mtime(value: object) -> float | None:
+def parse_config_mtime(value: object, is_utc: bool = False) -> float | None:
     """Parse modification timestamp from config."""
     if value is None:
         return None
@@ -137,9 +138,12 @@ def parse_config_mtime(value: object) -> float | None:
     if isinstance(value, (int, float)):
         return float(value)
     if isinstance(value, datetime):
+        if is_utc and value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
         return value.timestamp()
     if isinstance(value, date):
-        return datetime.combine(value, date_time.min).timestamp()
+        tz = timezone.utc if is_utc else None
+        return datetime.combine(value, date_time.min, tzinfo=tz).timestamp()
     if isinstance(value, str):
         text = value.strip()
         if not text:
@@ -147,14 +151,19 @@ def parse_config_mtime(value: object) -> float | None:
         if text.endswith("Z"):
             text = text[:-1] + "+00:00"
         try:
-            return datetime.fromisoformat(text).timestamp()
+            dt = datetime.fromisoformat(text)
+            if is_utc and dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt.timestamp()
         except ValueError as exc:
             raise ValueError("process_after_mtime 必须为空，或形如 2026-04-29 18:30:00") from exc
     raise ValueError("process_after_mtime 必须为空、数字时间戳或日期时间字符串")
 
 
-def format_config_mtime(timestamp: float) -> str:
+def format_config_mtime(timestamp: float, is_utc: bool = False) -> str:
     """Format float timestamp to clean YYYY-MM-DD HH:mm:ss string."""
+    if is_utc:
+        return datetime.fromtimestamp(timestamp, timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     return datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M:%S")
 
 

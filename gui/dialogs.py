@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -37,12 +37,13 @@ class PreCheckDialog(QDialog):
 
     sig_start_requested = Signal()
 
-    def __init__(self, files: list[Path], parent=None) -> None:
+    def __init__(self, files: list[Path], is_utc: bool = False, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("预检清单")
         self.resize(860, 540)
         self.setMinimumSize(640, 380)
         self.all_files = files
+        self.is_utc = is_utc
         self.current_filter = "all"
         self.search_text = ""
 
@@ -193,7 +194,10 @@ class PreCheckDialog(QDialog):
             try:
                 stat = f.stat()
                 size_str = format_size(stat.st_size)
-                mtime_str = datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S")
+                if self.is_utc:
+                    mtime_str = datetime.fromtimestamp(stat.st_mtime, timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+                else:
+                    mtime_str = datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S")
             except OSError:
                 size_str = "-"
                 mtime_str = "-"
