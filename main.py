@@ -13,6 +13,11 @@ from gui.main_window import MainWindow
 
 
 def main() -> int:
+    # Enable modern Linux desktop portal (native KDE Dolphin / GNOME Nautilus)
+    if sys.platform.startswith("linux"):
+        import os
+        os.environ.setdefault("QT_USE_PORTAL", "1")
+
     # High DPI & rendering attributes
     QApplication.setHighDpiScaleFactorRoundingPolicy(
         Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
